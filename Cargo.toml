@@ -1,0 +1,11 @@
+[package]
+name = "fusion-kbd-controller"
+version = "0.1.0"
+authors = ["Daniel Prilik <danielprilik@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.32.0"
+libusb = "0.3"
+strum = "0.12.0"
+strum_macros = "0.12.0"
