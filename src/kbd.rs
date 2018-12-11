@@ -61,8 +61,11 @@ impl Header {
         };
 
         // calculate checksum byte
-        let checksumtmp: u16 = u16::from(header.as_bytes().iter().take(7).sum::<u8>());
-        header.checksum = 0xff - (checksumtmp as u8);
+        header.checksum = !(header
+            .as_bytes()
+            .iter()
+            .take(7)
+            .fold(0, |sum, x| sum.wrapping_add(*x)));
 
         header
     }
@@ -105,7 +108,7 @@ impl<'a> FusionKBD<'a> {
         Ok(FusionKBD { handle })
     }
 
-    fn control_transfer(&self, header: &Header) -> Result<usize, libusb::Error> {
+    fn write_control_kbd(&self, header: &Header) -> Result<usize, libusb::Error> {
         self.handle.write_control(
             libusb::request_type(
                 libusb::Direction::Out,
@@ -120,6 +123,7 @@ impl<'a> FusionKBD<'a> {
         )
     }
 
+    /// switch lighting to built-in preset
     pub fn set_preset(
         &self,
         preset: Preset,
@@ -127,12 +131,6 @@ impl<'a> FusionKBD<'a> {
         brightness: u8,
         color: Color,
     ) -> Result<(), libusb::Error> {
-        let header = Header::new(KIND_PRESET, 0x33, 0x05, 0x32, 0x02);
-
-        print!("Control transfer 1...");
-        self.control_transfer(&header)?;
-        println!("Ok!");
-
         let header = Header::new(
             KIND_PRESET,
             preset as u8,
@@ -140,20 +138,16 @@ impl<'a> FusionKBD<'a> {
             brightness,
             color as u8, // COLOR_RED
         );
-
-        print!("Control transfer 2...");
-        self.control_transfer(&header)?;
-        println!("Ok!");
+        self.write_control_kbd(&header)?;
 
         Ok(())
     }
 
-    pub fn set_custom(&self, brightness: u8, data: &[u8]) -> Result<(), libusb::Error> {
-        let header = Header::new(KIND_CUSTOM_CONFIG, 0x01, 0x08, 0x00, 0x00);
-
-        print!("Control transfer 1...");
-        self.control_transfer(&header)?;
-        println!("Ok!");
+    /// upload custom lighting scheme to selected custom mode slot
+    pub fn upload_custom(&self, slot: u8, data: &[u8]) -> Result<(), libusb::Error> {
+        assert!(slot < 5);
+        let header = Header::new(KIND_CUSTOM_CONFIG, slot, 0x08, 0x00, 0x00);
+        self.write_control_kbd(&header)?;
 
         print!("Interrupt transfers...");
         for i in 0..8 {
@@ -168,10 +162,18 @@ impl<'a> FusionKBD<'a> {
         }
         println!("Ok!");
 
-        let header = Header::new(KIND_PRESET, 0x34, 0x05, brightness, 0);
-        print!("Control transfer 2...");
-        self.control_transfer(&header)?;
-        println!("Ok!");
+        // will NOT automatically switch to the new mode!
+        // requires call to set_custom
+
+        Ok(())
+    }
+
+    /// switch to custom lighting scheme in selected custom mode slot
+    pub fn set_custom(&self, slot: u8, brightness: u8) -> Result<(), libusb::Error> {
+        assert!(slot < 5);
+        // 33..37 are the custom-mode slots
+        let header = Header::new(KIND_PRESET, 0x33 + slot, 0, brightness, 0);
+        self.write_control_kbd(&header)?;
 
         Ok(())
     }

@@ -4,10 +4,12 @@ use std::str::FromStr;
 
 mod kbd;
 
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{App, Arg, SubCommand};
 use strum::IntoEnumIterator;
 
 enum Mode {
+    Nothing,
+    Brightness(u8),
     Preset {
         brightness: u8,
         preset: kbd::Preset,
@@ -16,7 +18,8 @@ enum Mode {
     },
     Custom {
         brightness: u8,
-        config: String,
+        slot: u8,
+        config: Option<String>,
     },
 }
 
@@ -35,7 +38,6 @@ fn main() -> Result<(), libusb::Error> {
     let app_m = App::new("fusion-kbd-controller")
         .version("0.1")
         .about("Control Fusion RGB Keyboard on Gigabyte Aero 15X")
-        .setting(AppSettings::SubcommandRequired)
         .arg(Arg::with_name("brightness")
             .global(true)
             .takes_value(true)
@@ -43,14 +45,14 @@ fn main() -> Result<(), libusb::Error> {
             .long("brightness")
             .validator(|bstr| {
                 let bval = bstr.parse::<u8>();
-                if bval.is_err() || bval.unwrap() > 0x50 {
-                    return Err("brightness must be a number from 0 - 80!".to_string())
+                if bval.is_err() || bval.unwrap() > 50 {
+                    return Err("brightness must be a number from 0 - 50!".to_string())
                 }
                 Ok(())
             })
-            .help("keyboard brightness (0 - 80)"))
+            .help("keyboard brightness (0 - 50)"))
         .subcommand(SubCommand::with_name("preset")
-            .about("Set lighting from Preset profiles")
+            .about("Work with Preset lighting profiles")
             .arg(Arg::with_name("preset")
                 .required(true)
                 .possible_values(&preset_strs)
@@ -73,18 +75,29 @@ fn main() -> Result<(), libusb::Error> {
                 })
                 .help("effect speed (0 - 10)")))
         .subcommand(SubCommand::with_name("custom")
-            .about("Set a custom lighting profile")
-            .arg(Arg::with_name("config")
+            .about("Work with Custom lighting profiles")
+            .arg(Arg::with_name("slot")
                 .required(true)
                 .index(1)
-                .help("RGB Configuration File (binary)")))
+                .validator(|sstr| {
+                    let sval = sstr.parse::<u8>();
+                    if sval.is_err() || sval.unwrap() > 4 {
+                        return Err("speed must be a number from 0 - 4!".to_string())
+                    }
+                    Ok(())
+                })
+                .help("Custom slot (0 - 4)"))
+            .arg(Arg::with_name("config")
+                .takes_value(true)
+                .long("config")
+                .help("Upload new RGB Configuration to selected slot (binary)")))
         .get_matches();
 
     // handle args
 
     let brightness = match app_m.value_of("brightness") {
-        Some(bstr) => bstr.parse::<u8>().unwrap(),
-        None => 0x50 / 3,
+        Some(bstr) => Some(bstr.parse::<u8>().unwrap()),
+        None => None,
     };
 
     let mode: Mode = match app_m.subcommand() {
@@ -109,6 +122,8 @@ fn main() -> Result<(), libusb::Error> {
                 None => kbd::Color::Rand,
             };
 
+            let brightness = brightness.unwrap_or(0x50 / 3);
+
             Mode::Preset {
                 brightness,
                 preset,
@@ -117,10 +132,23 @@ fn main() -> Result<(), libusb::Error> {
             }
         }
         ("custom", Some(custom_m)) => {
-            let config = custom_m.value_of("config").unwrap().to_string();
+            let slot = custom_m.value_of("slot").unwrap().parse::<u8>().unwrap();
+            let config = match custom_m.value_of("config") {
+                Some(config) => Some(config.to_string()),
+                None => None,
+            };
+            let brightness = brightness.unwrap_or(0x50 / 3);
 
-            Mode::Custom { brightness, config }
+            Mode::Custom {
+                brightness,
+                slot,
+                config,
+            }
         }
+        ("", None) => match brightness {
+            Some(brightness) => Mode::Brightness(brightness),
+            None => Mode::Nothing,
+        },
         _ => unimplemented!(), // this will never happen happen
     };
 
@@ -131,6 +159,8 @@ fn main() -> Result<(), libusb::Error> {
     let kbd = kbd::FusionKBD::new(&context)?;
 
     match mode {
+        Mode::Nothing => {}
+        Mode::Brightness(_) => unimplemented!(),
         Mode::Preset {
             brightness,
             preset,
@@ -139,19 +169,26 @@ fn main() -> Result<(), libusb::Error> {
         } => {
             kbd.set_preset(preset, speed, brightness, color)?;
         }
-        Mode::Custom { brightness, config } => {
-            let mut f = match File::open(&config) {
-                Ok(file) => file,
-                Err(_) => {
-                    println!("couldn't open '{}'", config);
-                    return Err(libusb::Error::Other);
-                }
-            };
+        Mode::Custom {
+            brightness,
+            slot,
+            config,
+        } => {
+            if let Some(config) = config {
+                let mut f = match File::open(&config) {
+                    Ok(file) => file,
+                    Err(_) => {
+                        println!("couldn't open '{}'", config);
+                        return Err(libusb::Error::Other);
+                    }
+                };
 
-            let mut cfg = [0; 512];
-            f.read_exact(&mut cfg).unwrap();
+                let mut data = [0; 512];
+                f.read_exact(&mut data).unwrap();
+                kbd.upload_custom(slot, &data)?;
+            }
 
-            kbd.set_custom(brightness, &cfg)?;
+            kbd.set_custom(slot, brightness)?;
         }
     }
 
