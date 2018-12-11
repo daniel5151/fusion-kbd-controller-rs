@@ -78,7 +78,7 @@ impl Header {
 
 static KIND_PRESET: u8 = 0x08;
 static KIND_CUSTOM_CONFIG: u8 = 0x12;
-// static KIND_READ_CONFIG: u8 = 0x92;
+static KIND_READ_CONFIG: u8 = 0x92;
 
 pub struct FusionKBD<'a> {
     handle: libusb::DeviceHandle<'a>,
@@ -143,6 +143,42 @@ impl<'a> FusionKBD<'a> {
         Ok(())
     }
 
+    pub fn download_custom(&self, slot: u8, data: &mut [u8; 512]) -> Result<(), libusb::Error> {
+        assert!(slot < 5);
+
+        self.write_control_kbd(&Header::new(KIND_READ_CONFIG, slot, 0, 0, 0))?;
+
+        self.handle.read_control(
+            libusb::request_type(
+                libusb::Direction::In,
+                libusb::RequestType::Class,
+                libusb::Recipient::Interface,
+            ),
+            0x01,        // bRequest
+            0x0300,      // wValue
+            0x0003,      // wIndex
+            &mut [0; 8], // dummy buffer
+            time::Duration::new(0, 0),
+        )?;
+
+        print!("Interrupt transfers...");
+        for i in 0..8 {
+            let start = i * 64;
+            let end = start + 64;
+            let tf = self.handle.read_interrupt(
+                0x85,
+                &mut data[start..end],
+                time::Duration::new(0, 0),
+            )?;
+            if tf != 64 {
+                eprintln!("Interrupt transfer {} failed: {}", i, tf);
+            }
+        }
+        println!("Ok!");
+
+        Ok(())
+    }
+
     /// upload custom lighting scheme to selected custom mode slot
     pub fn upload_custom(&self, slot: u8, data: &[u8]) -> Result<(), libusb::Error> {
         assert!(slot < 5);
@@ -176,6 +212,25 @@ impl<'a> FusionKBD<'a> {
         self.write_control_kbd(&header)?;
 
         Ok(())
+    }
+
+    pub fn get_key(&self) -> Option<char> {
+        let mut buf: [u8; 8] = [0; 8];
+        let _ = self
+            .handle
+            .read_interrupt(0x81, &mut buf, time::Duration::from_millis(10));
+
+        // too lazy to actually implement usbhid translaton.
+        // maybe later?
+        // check out:
+        //   - https://bitvijays.github.io/LFC-Forensics.html#usb-keyboard
+        //   - google usb_hid_keys.h
+
+        if buf[2] != 0x00 {
+            Some('a')
+        } else {
+            None
+        }
     }
 }
 

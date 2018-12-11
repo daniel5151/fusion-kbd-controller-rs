@@ -9,12 +9,7 @@ At the moment, you can:
 
 Time permitting, more functionality will be RE'd and added to the tool.
 
-On my radar:
-- update brightness without re-sending entire config
-  - read current brightness
-- read current config
-
-It is based off [martin31821's `fusion-kbd-controller`](https://github.com/martin31821/fusion-kbd-controller)
+It is based off inital RE work from [martin31821's `fusion-kbd-controller`](https://github.com/martin31821/fusion-kbd-controller)
 
 ## Install
 
@@ -23,16 +18,26 @@ A standard `cargo install` should do the trick!
 ## Usage
 
 cfg files are currently raw binary corresponding to the USB payload sent to the
-keyboard. Check out the OG project to get an idea of the data format!
+keyboard. Check out the example-configs to get a rough idea of the data format.
+`keys.txt` lists what bytes correspond to what keys (on my US keyboard layout)
 
 TODO: write a user-friendly tool to generate configs
 
 Root privileges are required, since the tool has to temporarily unbinds the USB
 device from the kernel module.
 
-## Current state
+## TODO
 
-It seems to work, but more testing and functionality work is required.
+- [x] Read custom config to file
+- update relative brightness (e.g: `fusion-kbd-controller -b +10`)
+  - [ ] read current config
+  - [ ] resend current config with updated brightness
+
+## Fun Facts!
+
+- There doesn't seem to be a "change brightness" command. Instead, the software
+will just read the current mode, and switch to the same mode, but with a new
+brightness value.
 
 ## Disclaimer
 

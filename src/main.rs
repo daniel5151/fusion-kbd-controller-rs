@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::str::FromStr;
 
 mod kbd;
@@ -16,10 +16,18 @@ enum Mode {
         color: kbd::Color,
         speed: u8,
     },
-    Custom {
+    CustomSwitch {
         brightness: u8,
         slot: u8,
-        config: Option<String>,
+    },
+    CustomSet {
+        brightness: u8,
+        slot: u8,
+        config: String,
+    },
+    CustomGet {
+        slot: u8,
+        config: String,
     },
 }
 
@@ -87,10 +95,18 @@ fn main() -> Result<(), libusb::Error> {
                     Ok(())
                 })
                 .help("Custom slot (0 - 4)"))
-            .arg(Arg::with_name("config")
+            .arg(Arg::with_name("set")
+                .conflicts_with("get")
                 .takes_value(true)
-                .long("config")
-                .help("Upload new RGB Configuration to selected slot (binary)")))
+                .value_name("FILE")
+                .long("set")
+                .help("Upload new RGB Configuration to selected slot (binary)"))
+            .arg(Arg::with_name("get")
+                .conflicts_with("set")
+                .takes_value(true)
+                .value_name("FILE")
+                .long("get")
+                .help("Download RGB Configuration from selected slot (binary)")))
         .get_matches();
 
     // handle args
@@ -133,23 +149,28 @@ fn main() -> Result<(), libusb::Error> {
         }
         ("custom", Some(custom_m)) => {
             let slot = custom_m.value_of("slot").unwrap().parse::<u8>().unwrap();
-            let config = match custom_m.value_of("config") {
-                Some(config) => Some(config.to_string()),
-                None => None,
-            };
             let brightness = brightness.unwrap_or(0x50 / 3);
 
-            Mode::Custom {
-                brightness,
-                slot,
-                config,
+            if let Some(cfg) = custom_m.value_of("set") {
+                Mode::CustomSet {
+                    brightness,
+                    slot,
+                    config: cfg.to_string(),
+                }
+            } else if let Some(cfg) = custom_m.value_of("get") {
+                Mode::CustomGet {
+                    slot,
+                    config: cfg.to_string(),
+                }
+            } else {
+                Mode::CustomSwitch { brightness, slot }
             }
         }
         ("", None) => match brightness {
             Some(brightness) => Mode::Brightness(brightness),
             None => Mode::Nothing,
         },
-        _ => unimplemented!(), // this will never happen happen
+        _ => unimplemented!(), // this will never happen
     };
 
     // actually do the interesting stuff
@@ -160,7 +181,10 @@ fn main() -> Result<(), libusb::Error> {
 
     match mode {
         Mode::Nothing => {}
-        Mode::Brightness(_) => unimplemented!(),
+        Mode::Brightness(_) => {
+            println!("TODO: read current config, and write-back same config with updated brightness");
+            unimplemented!();
+        }
         Mode::Preset {
             brightness,
             preset,
@@ -169,26 +193,40 @@ fn main() -> Result<(), libusb::Error> {
         } => {
             kbd.set_preset(preset, speed, brightness, color)?;
         }
-        Mode::Custom {
+        Mode::CustomSwitch { brightness, slot } => {
+            kbd.set_custom(slot, brightness)?;
+        }
+        Mode::CustomSet {
             brightness,
             slot,
             config,
         } => {
-            if let Some(config) = config {
-                let mut f = match File::open(&config) {
-                    Ok(file) => file,
-                    Err(_) => {
-                        println!("couldn't open '{}'", config);
-                        return Err(libusb::Error::Other);
-                    }
-                };
+            let mut data = [0; 512];
+            let mut f = match File::open(&config) {
+                Ok(file) => file,
+                Err(_) => {
+                    println!("couldn't open '{}'", config);
+                    return Err(libusb::Error::Other);
+                }
+            };
+            f.read_exact(&mut data).unwrap();
 
-                let mut data = [0; 512];
-                f.read_exact(&mut data).unwrap();
-                kbd.upload_custom(slot, &data)?;
-            }
-
+            kbd.upload_custom(slot, &data)?;
             kbd.set_custom(slot, brightness)?;
+        }
+        Mode::CustomGet { slot, config } => {
+            let mut data: [u8; 512] = [0; 512];
+
+            kbd.download_custom(slot, &mut data)?;
+
+            let mut f = match File::create(&config) {
+                Ok(file) => file,
+                Err(_) => {
+                    println!("couldn't open '{}'", config);
+                    return Err(libusb::Error::Other);
+                }
+            };
+            f.write(&data).unwrap();
         }
     }
 
